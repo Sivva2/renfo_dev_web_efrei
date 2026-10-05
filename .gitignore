@@ -1,6 +1,15 @@
 node_modules/
+<<<<<<< HEAD
 dist/
 preuves/
 test-results/
 playwright-report/
 coverage/
+=======
+test-results/
+playwright-report/
+.env
+.env.*
+.DS_Store
+Thumbs.db
+>>>>>>> d8ab06f (initial commit)
