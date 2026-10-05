@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AstroBot - Observation du ciel</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0b1026;
+      color: #e8ecf8;
+      font-family: system-ui, sans-serif;
+    }
+    .chat {
+      width: min(560px, 94vw);
+      height: min(680px, 92vh);
+      display: flex;
+      flex-direction: column;
+      background: #141b3a;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    }
+    header {
+      padding: 14px 18px;
+      background: #1c2650;
+      font-weight: 600;
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .msg {
+      max-width: 82%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .bot { background: #26335f; align-self: flex-start; }
+    .user { background: #4a6cf7; align-self: flex-end; }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: #1c2650;
+    }
+    input {
+      flex: 1;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #4a6cf7;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 0 16px 10px;
+    }
+    .suggestions button {
+      background: #26335f;
+      font-size: 0.85rem;
+      padding: 6px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat">
+    <header>🔭 AstroBot - Observation du ciel</header>
+    <div id="messages"></div>
+    <div class="suggestions" id="suggestions"></div>
+    <form id="form">
+      <input id="input" type="text" placeholder="Pose ta question..." autocomplete="off">
+      <button type="submit">Envoyer</button>
+    </form>
+  </div>
+
+  <script>
+    const messages = document.getElementById('messages');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const suggestions = document.getElementById('suggestions');
+
+    const reponses = [
+      {
+        mots: ['etoile filante', 'etoiles filantes', 'perseides', 'geminides', 'quadrantides', 'pluie', 'essaim'],
+        texte: "Pour observer une pluie d'étoiles filantes :\n- Les Perséides (autour du 12 août), les Géminides (autour du 14 décembre) et les Quadrantides (début janvier) sont parmi les plus belles.\n- Consulte la date du pic et la phase de la Lune : une Lune pleine gâche le spectacle.\n- Pars loin des lumières de la ville, allonge-toi et regarde large, sans jumelles.\n- Compte 20 à 30 minutes pour que tes yeux s'habituent à l'obscurité."
+      },
+      {
+        mots: ['condition', 'conditions', 'meteo', 'nuage', 'nuages', 'ciel clair', 'seeing', 'pollution lumineuse', 'ce soir'],
+        texte: "Les conditions d'observation sont bonnes quand :\n- le ciel est dégagé (peu ou pas de nuages) ;\n- la Lune est absente ou très fine ;\n- tu es loin de la pollution lumineuse (carte Light Pollution Map, échelle de Bortle) ;\n- l'air est stable (bon « seeing ») et peu humide.\nConsulte une prévision astronomique (par exemple Meteoblue ou Clear Outside) pour la nuit en question."
+      },
+      {
+        mots: ['apprendre', 'debuter', 'debutant', 'commencer', 'constellation', 'constellations', 'reperer', 'etoiles'],
+        texte: "Pour apprendre à observer les étoiles :\n- Commence à l'œil nu : repère la Grande Ourse, puis l'étoile Polaire, puis Cassiopée.\n- Utilise une application de carte du ciel (Stellarium, SkyView) pour t'orienter.\n- Laisse tes yeux s'habituer au noir pendant 20 minutes, et utilise une lampe rouge.\n- Passe ensuite à des jumelles (7x50 ou 10x50) avant de songer à un télescope."
+      },
+      {
+        mots: ['telescope', 'jumelles', 'materiel', 'lunette'],
+        texte: "Pour débuter, des jumelles 10x50 suffisent pour voir les cratères de la Lune, les satellites de Jupiter et de nombreux amas d'étoiles. Un télescope de type Dobson de 150 à 200 mm est ensuite un très bon premier instrument."
+      },
+      {
+        mots: ['lune', 'lunaire'],
+        texte: "La Lune est belle à observer, surtout en phase croissante, quand le terminateur (la limite entre ombre et lumière) fait ressortir le relief. Pour observer les objets faibles, préfère les nuits sans Lune."
+      },
+      {
+        mots: ['planete', 'planetes', 'jupiter', 'saturne', 'mars', 'venus'],
+        texte: "Vénus, Mars, Jupiter et Saturne sont visibles à l'œil nu. Avec de petites jumelles, tu peux voir les quatre grosses lunes de Jupiter. Un petit télescope montre les anneaux de Saturne."
+      },
+      {
+        mots: ['salut', 'bonjour', 'coucou', 'hello'],
+        texte: "Bonjour ! Je suis AstroBot. Je peux t'aider à préparer une observation, à juger les conditions ou à apprendre à repérer les étoiles."
+      },
+      {
+        mots: ['aide', 'help'],
+        texte: "Tu peux me demander par exemple :\n- Comment préparer une pluie d'étoiles filantes ?\n- Les conditions sont-elles bonnes ce soir ?\n- Comment apprendre à repérer les constellations ?"
+      },
+      {
+        mots: ['merci'],
+        texte: "Avec plaisir ! Bon ciel étoilé."
+      }
+    ];
+
+    const horsSujet = [
+      "Je ne suis pas sûr de comprendre. Je parle d'observation du ciel : étoiles filantes, conditions d'observation, constellations, matériel. Tape « aide » pour des exemples.",
+      "Hmm, ça sort de mon champ de vision ! Je suis meilleur pour parler d'astronomie. Essaie « aide » pour voir ce que je sais faire.",
+      "Là, je suis dans le noir complet. Pose-moi plutôt une question sur le ciel, les étoiles filantes ou les constellations.",
+      "Cette question est hors de mon orbite. Je peux t'aider à préparer une observation ou à repérer des constellations.",
+      "Je n'ai pas la réponse, mais le ciel de cette nuit, lui, vaut le détour. Demande-moi comment l'observer !"
+    ];
+
+    function normaliser(texte) {
+      return texte
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    }
+
+    function ajouter(texte, auteur) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + auteur;
+      div.textContent = texte;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function repondre(question) {
+      const q = normaliser(question);
+      for (const regle of reponses) {
+        if (regle.mots.some((mot) => q.includes(mot))) {
+          return regle.texte;
+        }
+      }
+      return horsSujet[Math.floor(Math.random() * horsSujet.length)];
+    }
+
+    function envoyer(texte) {
+      const propre = texte.trim();
+      if (!propre) return;
+      ajouter(propre, 'user');
+      setTimeout(() => ajouter(repondre(propre), 'bot'), 300);
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      envoyer(input.value);
+      input.value = '';
+    });
+
+    [
+      "Comment préparer une pluie d'étoiles filantes ?",
+      'Les conditions sont-elles bonnes ce soir ?',
+      'Comment apprendre à repérer les étoiles ?'
+    ].forEach((q) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = q;
+      b.addEventListener('click', () => envoyer(q));
+      suggestions.appendChild(b);
+    });
+
+    ajouter("Bonjour ! Je suis AstroBot, ton guide pour l'observation du ciel. Pose-moi une question ou clique sur une suggestion.", 'bot');
+  </script>
+</body>
+</html>
