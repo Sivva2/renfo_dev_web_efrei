@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astro Guide – Chatbot d'observation du ciel</title>
+<style>
+  :root {
+    --bg: #070b1a;
+    --panel: #0e1530;
+    --panel-2: #151e42;
+    --text: #e6eaf7;
+    --muted: #8a94b8;
+    --accent: #f5c26b;
+    --accent-2: #6ea8ff;
+    --user: #24345f;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: radial-gradient(ellipse at top, #121c45 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 20px 12px;
+  }
+  .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .app {
+    position: relative; z-index: 1;
+    width: 100%; max-width: 760px;
+    height: calc(100vh - 40px);
+    display: flex; flex-direction: column;
+    background: rgba(14, 21, 48, 0.88);
+    border: 1px solid #1f2a5a;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    backdrop-filter: blur(6px);
+  }
+  header {
+    padding: 16px 20px;
+    display: flex; align-items: center; gap: 14px;
+    border-bottom: 1px solid #1f2a5a;
+    background: linear-gradient(180deg, #131c40, #0e1530);
+  }
+  .logo {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #fff6d8, var(--accent) 55%, #b9822c);
+    box-shadow: 0 0 18px rgba(245,194,107,.45);
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 1.1rem; font-weight: 600; }
+  header p { font-size: .8rem; color: var(--muted); }
+  #moon-badge {
+    margin-left: auto; font-size: .78rem; color: var(--muted);
+    text-align: right; line-height: 1.3;
+  }
+  #moon-badge span { font-size: 1.4rem; display: block; }
+  #chat {
+    flex: 1; overflow-y: auto; padding: 18px 16px;
+    display: flex; flex-direction: column; gap: 12px;
+    scroll-behavior: smooth;
+  }
+  .msg {
+    max-width: 86%; padding: 11px 15px; border-radius: var(--radius);
+    line-height: 1.5; font-size: .95rem;
+    animation: pop .25s ease;
+    white-space: pre-wrap;
+  }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .bot { background: var(--panel-2); border: 1px solid #222e63; align-self: flex-start; border-bottom-left-radius: 4px; }
+  .user { background: var(--user); align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg b { color: var(--accent); }
+  .typing { display: inline-flex; gap: 4px; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .2s; }
+  .typing i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 10px; }
+  .chip {
+    background: transparent; color: var(--accent-2);
+    border: 1px solid #2c3d7a; border-radius: 999px;
+    padding: 6px 13px; font-size: .8rem; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .chip:hover { background: #1a2759; color: #fff; }
+  form {
+    display: flex; gap: 10px; padding: 12px 16px 16px;
+    border-top: 1px solid #1f2a5a; background: var(--panel);
+  }
+  input {
+    flex: 1; background: #0a1028; color: var(--text);
+    border: 1px solid #27356e; border-radius: 12px;
+    padding: 12px 14px; font-size: .95rem; outline: none;
+  }
+  input:focus { border-color: var(--accent-2); }
+  button.send {
+    background: var(--accent); color: #2a1d05; border: none;
+    border-radius: 12px; padding: 0 20px; font-weight: 600; cursor: pointer;
+  }
+  button.send:hover { filter: brightness(1.08); }
+  @media (max-width: 520px) {
+    body { padding: 0; }
+    .app { height: 100vh; border-radius: 0; }
+    #moon-badge { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas class="stars" id="stars"></canvas>
+
+<div class="app">
+  <header>
+    <div class="logo"></div>
+    <div>
+      <h1>Astro Guide</h1>
+      <p>Ton compagnon d'observation du ciel</p>
+    </div>
+    <div id="moon-badge"></div>
+  </header>
+
+  <div id="chat"></div>
+  <div class="chips" id="chips"></div>
+
+  <form id="form" autocomplete="off">
+    <input id="input" type="text" placeholder="Pose ta question : Lune, planètes, matériel, Messier…" aria-label="Ta question">
+    <button class="send" type="submit">Envoyer</button>
+  </form>
+</div>
+
+<script>
+(function () {
+  const chat = document.getElementById('chat');
+  const form = document.getElementById('form');
+  const input = document.getElementById('input');
+  const chipsBox = document.getElementById('chips');
+
+  function moonInfo(date) {
+    const synodic = 29.530588853;
+    const ref = Date.UTC(2000, 0, 6, 18, 14);
+    const days = (date.getTime() - ref) / 86400000;
+    const age = ((days % synodic) + synodic) % synodic;
+    const illum = (1 - Math.cos(2 * Math.PI * age / synodic)) / 2;
+    const phases = [
+      [1.85, 'Nouvelle Lune', '🌑'],
+      [5.54, 'Premier croissant', '🌒'],
+      [9.23, 'Premier quartier', '🌓'],
+      [12.92, 'Gibbeuse croissante', '🌔'],
+      [16.61, 'Pleine Lune', '🌕'],
+      [20.30, 'Gibbeuse décroissante', '🌖'],
+      [23.99, 'Dernier quartier', '🌗'],
+      [27.68, 'Dernier croissant', '🌘'],
+      [99, 'Nouvelle Lune', '🌑']
+    ];
+    const p = phases.find(x => age < x[0]);
+    return { age, illum: Math.round(illum * 100), name: p[1], icon: p[2], synodic };
+  }
+
+  function nextEvent(date, targetAge) {
+    const m = moonInfo(date);
+    let delta = targetAge - m.age;
+    if (delta < 0) delta += m.synodic;
+    return new Date(date.getTime() + delta * 86400000);
+  }
+
+  const fmt = d => d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  function seasonSky(date) {
+    const m = date.getMonth() + 1;
+    if (m === 12 || m <= 2) return {
+      name: 'hiver',
+      txt: "Le ciel d'hiver est le plus riche en étoiles brillantes.\n• <b>Orion</b> avec Bételgeuse et Rigel, et la nébuleuse M42 à l'œil nu ou aux jumelles\n• <b>Taureau</b> : les Pléiades (M45), les Hyades, Aldébaran\n• <b>Grand Chien</b> : Sirius, l'étoile la plus brillante du ciel\n• <b>Gémeaux</b> : Castor et Pollux\n• <b>Cocher</b> : Capella, amas M36, M37, M38"
+    };
+    if (m <= 5) return {
+      name: 'printemps',
+      txt: "Le printemps ouvre la saison des galaxies, loin de la Voie lactée.\n• <b>Grande Ourse</b> : repère idéal, M81 et M82 à proximité\n• <b>Lion</b> : Régulus et le Triplet du Lion (M65, M66)\n• <b>Vierge</b> : l'amas de galaxies de la Vierge, Spica\n• <b>Bouvier</b> : Arcturus\n• <b>Chevelure de Bérénice</b> : amas M53 et nombreuses galaxies"
+    };
+    if (m <= 8) return {
+      name: 'été',
+      txt: "L'été offre le cœur de la Voie lactée, avec le Triangle d'été.\n• <b>Triangle d'été</b> : Véga (Lyre), Deneb (Cygne), Altaïr (Aigle)\n• <b>Sagittaire et Scorpion</b> : M8 (Lagune), M20 (Trifide), M22, Antarès\n• <b>Lyre</b> : la nébuleuse planétaire M57\n• <b>Hercule</b> : l'amas globulaire M13\n• <b>Petit Renard</b> : la nébuleuse Dumbbell (M27)"
+    };
+    return {
+      name: 'automne',
+      txt: "L'automne est idéal pour la galaxie d'Andromède et les amas de Persée.\n• <b>Grand Carré de Pégase</b> : point de départ pour se repérer\n• <b>Andromède</b> : la galaxie M31, visible à l'œil nu sous un ciel sombre\n• <b>Triangle</b> : la galaxie M33\n• <b>Persée</b> : le Double Amas (NGC 869 et 884), Algol\n• <b>Cassiopée</b> : la forme en W, repère de la Voie lactée automnale"
+    };
+  }
+
+  const showers = [
+    { m: 1, d: 3, name: 'Quadrantides', rate: '~80/h', note: 'pic bref, radiant dans le Bouvier' },
+    { m: 4, d: 22, name: 'Lyrides', rate: '~18/h', note: 'radiant près de Véga' },
+    { m: 5, d: 6, name: 'Êta Aquarides', rate: '~30/h', note: 'débris de la comète de Halley, meilleur dans l\'hémisphère sud' },
+    { m: 8, d: 12, name: 'Perséides', rate: '~100/h', note: 'les plus populaires, nuits chaudes d\'été' },
+    { m: 10, d: 21, name: 'Orionides', rate: '~20/h', note: 'autre trace de la comète de Halley' },
+    { m: 11, d: 17, name: 'Léonides', rate: '~15/h', note: 'météores très rapides' },
+    { m: 12, d: 13, name: 'Géminides', rate: '~120/h', note: 'la pluie la plus active de l\'année' }
+  ];
+
+  function nextShowers(date, n) {
+    const y = date.getFullYear();
+    const list = showers.map(s => {
+      let dt = new Date(y, s.m - 1, s.d);
+      if (dt < new Date(date.getFullYear(), date.getMonth(), date.getDate())) dt = new Date(y + 1, s.m - 1, s.d);
+      return { ...s, date: dt };
+    }).sort((a, b) => a.date - b.date);
+    return list.slice(0, n);
+  }
+
+  const messier = {
+    m1: "M1 (nébuleuse du Crabe) : reste de la supernova de 1054, dans le Taureau. Magnitude ~8,4, télescope conseillé.",
+    m13: "M13 (Grand amas d'Hercule) : amas globulaire de plusieurs centaines de milliers d'étoiles, magnitude ~5,8. Visible aux jumelles, superbe au télescope. Meilleur en été.",
+    m31: "M31 (galaxie d'Andromède) : la galaxie spirale la plus proche, à ~2,5 millions d'années-lumière. Magnitude ~3,4, visible à l'œil nu sous ciel sombre. Meilleure à l'automne.",
+    m42: "M42 (nébuleuse d'Orion) : pouponnière d'étoiles, visible à l'œil nu comme une tache floue sous la ceinture d'Orion. Magnifique aux jumelles et au télescope. Meilleure en hiver.",
+    m45: "M45 (Pléiades) : amas ouvert brillant dans le Taureau, 6 à 7 étoiles visibles à l'œil nu. Idéal aux jumelles. Meilleur en automne et en hiver.",
+    m51: "M51 (galaxie du Tourbillon) : galaxie spirale dans les Chiens de Chasse, magnitude ~8,4. Bras spiraux visibles dans un télescope de 200 mm sous ciel sombre.",
+    m57: "M57 (nébuleuse de l'Anneau) : nébuleuse planétaire dans la Lyre, petit anneau net de magnitude ~8,8. Un télescope est nécessaire. Meilleure en été.",
+    m81: "M81 (galaxie de Bode) : galaxie spirale dans la Grande Ourse, magnitude ~6,9, voisine de M82. Visible aux jumelles sous ciel sombre.",
+    m27: "M27 (nébuleuse Dumbbell) : nébuleuse planétaire dans le Petit Renard, magnitude ~7,5, avec une forme de sablier. Facile aux jumelles et au télescope."
+  };
+
+  const intents = [
+    { id: 'hello', kw: ['bonjour', 'salut', 'hello', 'coucou', 'bonsoir', 'hey'],
+      reply: () => "Salut, passionné du ciel ! Je peux te parler de la Lune, des planètes, des constellations, des objets Messier, du matériel, de la photographie astro ou des pluies d'étoiles filantes. Qu'est-ce qui t'intéresse ?" },
+    { id: 'moon', kw: ['lune', 'phase', 'lunaire', 'pleine lune', 'croissant'],
+      reply: () => {
+        const now = new Date();
+        const m = moonInfo(now);
+        const full = nextEvent(now, m.synodic / 2);
+        const nw = nextEvent(now, 0);
+        return `${m.icon} Aujourd'hui : <b>${m.name}</b>, environ ${m.illum} % illuminée (âge ${m.age.toFixed(1)} jours).\n\nProchaine Pleine Lune : ${fmt(full)}\nProchaine Nouvelle Lune : ${fmt(nw)}\n\n<b>Conseil :</b> pour le ciel profond (galaxies, nébuleuses), privilégie les nuits autour de la Nouvelle Lune. Pour observer les cratères, vise le premier quartier : le terminateur révèle le plus de relief.`;
+      } },
+    { id: 'tonight', kw: ['ce soir', 'cette nuit', 'ciel actuel', 'aujourd', 'tonight', 'que voir', 'observer ce soir'],
+      reply: () => {
+        const now = new Date();
+        const s = seasonSky(now);
+        const m = moonInfo(now);
+        const qual = m.illum < 25 ? "La Lune est discrète : excellente nuit pour le ciel profond." : m.illum < 70 ? "La Lune gêne un peu : privilégie amas brillants, doubles et planètes." : "La Lune est très lumineuse : concentre-toi sur la Lune elle-même, les planètes et les étoiles doubles.";
+        return `Pour une soirée de ${s.name} :\n\n${s.txt}\n\n${m.icon} ${m.name} (${m.illum} %). ${qual}\n\nPour la position exacte des planètes ce soir, Stellarium (gratuit) ou Stellarium Web te donnent la réponse en quelques secondes.`;
+      } },
+    { id: 'planets', kw: ['planete', 'jupiter', 'saturne', 'mars', 'venus', 'mercure', 'uranus', 'neptune', 'planetes'],
+      reply: () => "<b>Planètes à observer :</b>\n• <b>Vénus</b> : très brillante, phases visibles dès des jumelles stabilisées\n• <b>Mars</b> : disque minuscule sauf à l'opposition, calottes polaires et taches sombres avec un bon télescope\n• <b>Jupiter</b> : bandes nuageuses et 4 lunes galiléennes dès des jumelles ; la Grande Tache rouge au télescope\n• <b>Saturne</b> : les anneaux sont visibles dès 30-40x\n• <b>Mercure</b> : délicate, basse sur l'horizon à l'aube ou au crépuscule\n• <b>Uranus et Neptune</b> : petits disques bleutés, télescope et cartes nécessaires\n\nLes positions changent chaque mois : consulte Stellarium pour savoir lesquelles sont visibles ce soir. Les oppositions (planète au plus près et visible toute la nuit) sont les meilleurs moments." },
+    { id: 'meteor', kw: ['etoile filante', 'etoiles filantes', 'meteore', 'meteores', 'perseides', 'geminides', 'pluie', 'essaim', 'leonides', 'orionides'],
+      reply: () => {
+        const list = nextShowers(new Date(), 3);
+        const txt = list.map(s => `• <b>${s.name}</b> : pic vers le ${s.date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} (${s.rate}), ${s.note}`).join('\n');
+        return `Prochaines pluies d'étoiles filantes :\n\n${txt}\n\n<b>Conseils :</b> pas besoin de matériel. Installe-toi sur un transat, laisse tes yeux s'adapter 20 à 30 minutes, regarde large (pas directement vers le radiant). Les taux horaires sont théoriques, sous un ciel parfait avec le radiant au zénith.`;
+      } },
+    { id: 'constellations', kw: ['constellation', 'constellations', 'orion', 'cassiopee', 'grande ourse', 'etoile polaire', 'polaire', 'se reperer', 'orienter'],
+      reply: () => "<b>Repères pour s'orienter :</b>\n• <b>La Grande Ourse</b> : prolonge d'environ 5 fois la distance des deux étoiles du bord de la casserole pour trouver l'étoile Polaire (le nord)\n• <b>Cassiopée</b> : un W de l'autre côté de la Polaire\n• <b>Orion</b> (hiver) : trois étoiles alignées de la ceinture, repère pour Sirius, Aldébaran et les Pléiades\n• <b>Triangle d'été</b> : Véga, Deneb, Altaïr\n• <b>Grand Carré de Pégase</b> (automne) : mène à Andromède\n\nUne carte du ciel mobile (Stellarium, SkySafari, Star Walk) est l'outil le plus pratique pour apprendre." },
+    { id: 'season', kw: ['saison', 'hiver', 'ete', 'automne', 'printemps', 'quel ciel'],
+      reply: () => {
+        const s = seasonSky(new Date());
+        return `En ce moment (${s.name}) :\n\n${s.txt}`;
+      } },
+    { id: 'gear', kw: ['materiel', 'telescope', 'jumelles', 'lunette', 'dobson', 'achat', 'acheter', 'debuter', 'debutant', 'commencer', 'monture', 'oculaire'],
+      reply: () => "<b>Pour débuter :</b>\n1. <b>Les yeux</b> et une carte du ciel : gratuit, et on apprend les constellations\n2. <b>Des jumelles 10x50</b> : excellent rapport qualité/prix, parfaites pour la Lune, les Pléiades, Andromède, la Voie lactée\n3. <b>Un Dobson 150-200 mm</b> : le meilleur ratio ouverture/prix pour le ciel profond, simple à utiliser\n\n<b>À éviter :</b> les télescopes de grande surface avec « 600x » en argument. Seule compte l'<b>ouverture</b> (diamètre), pas le grossissement.\n\n<b>Règles pratiques :</b> grossissement utile max ≈ 2 × diamètre en mm. Pour une lunette de 80 mm, ~160x. Laisse ton instrument se mettre en température 30 minutes avant d'observer." },
+    { id: 'magnification', kw: ['grossissement', 'focale', 'pupille', 'champ', 'barlow'],
+      reply: () => "<b>Calculs utiles :</b>\n• Grossissement = focale du télescope ÷ focale de l'oculaire\n• Grossissement maximum raisonnable ≈ 2 × diamètre (en mm)\n• Grossissement minimum ≈ diamètre ÷ 7\n• Rapport f/D = focale ÷ diamètre : plus il est bas, plus l'image est lumineuse et le champ large\n\nExemple : un Dobson 200 mm, focale 1200 mm, avec un oculaire de 25 mm donne 48x. Avec un oculaire de 10 mm, 120x." },
+    { id: 'pollution', kw: ['pollution lumineuse', 'bortle', 'ciel sombre', 'noir', 'lieu', 'site', 'endroit', 'etoile du berger', 'lumiere'],
+      reply: () => "<b>La pollution lumineuse</b> est l'ennemi n°1 de l'observation.\n\nL'<b>échelle de Bortle</b> classe les ciels de 1 (désert, ciel parfait) à 9 (centre-ville). En banlieue, on est autour de 6-7 ; la Voie lactée devient visible vers 4 et spectaculaire vers 3.\n\n<b>Pour trouver un bon site :</b>\n• Consulte la carte lightpollutionmap.info\n• Cherche un lieu en altitude ou loin des villes (Parcs naturels, Réserves Internationales de Ciel Étoilé)\n• Un filtre anti-pollution (UHC, OIII) aide pour les nébuleuses, mais ne remplace pas un ciel sombre\n\nAdapte tes yeux à l'obscurité 20-30 minutes et utilise une lampe rouge." },
+    { id: 'eyes', kw: ['adapter', 'adaptation', 'lampe rouge', 'vision', 'vision decalee', 'froid', 'habiller'],
+      reply: () => "<b>Bien préparer sa soirée :</b>\n• Adaptation à l'obscurité : 20-30 minutes sans lumière blanche, et une <b>lampe rouge</b> pour lire les cartes\n• <b>Vision décalée</b> : regarde légèrement à côté d'un objet faible, il apparaît plus nettement (la périphérie de la rétine est plus sensible)\n• Habille-toi bien plus chaud que prévu, on refroidit vite à l'immobilité\n• Thermos chaud, chaise confortable, et note tes observations dans un carnet" },
+    { id: 'astrophoto', kw: ['photo', 'photographie', 'astrophoto', 'astrophotographie', 'empilement', 'appareil', 'reflex', 'pose', 'smartphone', 'milky way', 'voie lactee'],
+      reply: () => "<b>Astrophotographie, par où commencer :</b>\n• <b>Voie lactée</b> : reflex ou hybride, objectif lumineux grand-angle (f/2.8 ou moins), 15-20 s de pose, 3200-6400 ISO, sur trépied\n• <b>Règle des 500</b> : temps de pose max ≈ 500 ÷ focale (mm) pour éviter les traînées d'étoiles\n• <b>Ciel profond</b> : monture équatoriale motorisée + empilement de nombreuses poses (logiciels : Siril, DeepSkyStacker, AstroPixelProcessor)\n• <b>Lune et planètes</b> : vidéo courte puis empilement avec AutoStakkert et Registax\n• <b>Smartphone</b> : le mode nuit marche pour la Lune et les grandes constellations ; un adaptateur oculaire donne de belles images de la Lune\n\nCommence simple, tu progresseras vite." },
+    { id: 'apps', kw: ['appli', 'application', 'logiciel', 'stellarium', 'carte du ciel', 'app', 'site web'],
+      reply: () => "<b>Outils conseillés :</b>\n• <b>Stellarium</b> (gratuit, PC et web) : simulation du ciel complète\n• <b>SkySafari / Star Walk / SkyView</b> : cartes mobiles en réalité augmentée\n• <b>Heavens-Above</b> : passages de l'ISS et des satellites\n• <b>Clear Outside</b> ou <b>Meteoblue</b> : prévisions de nébulosité et de seeing\n• <b>lightpollutionmap.info</b> : carte de pollution lumineuse\n• <b>Cartes du Ciel</b> et <b>Telescopius</b> : planification des soirées" },
+    { id: 'iss', kw: ['iss', 'station spatiale', 'satellite', 'starlink'],
+      reply: () => "<b>Station spatiale (ISS)</b> : plus brillante que Vénus par moments, elle traverse le ciel en 3 à 6 minutes, sans clignoter. Les meilleurs passages ont lieu peu après le coucher ou avant le lever du soleil, quand elle est encore éclairée mais que le ciel est sombre.\n\nConsulte Heavens-Above ou l'appli ISS Detector pour les heures exactes à ton adresse.\n\nLes trains de <b>Starlink</b> sont visibles peu après leur lancement : une ligne de points lumineux qui défile en file indienne." },
+    { id: 'eclipse', kw: ['eclipse', 'occultation', 'transit'],
+      reply: () => "<b>Éclipses :</b>\n• <b>Lunaire</b> : sans danger, visible à l'œil nu depuis tout l'hémisphère nocturne concerné\n• <b>Solaire</b> : jamais sans protection ! Utilise des lunettes certifiées ISO 12312-2 ou un filtre solaire adapté devant l'instrument. Ne regarde jamais le Soleil à travers jumelles ou télescope sans filtre : risque de cécité immédiate.\n\nPour les dates des prochaines éclipses, consulte les éphémérides de l'IMCCE ou timeanddate.com." },
+    { id: 'sun', kw: ['soleil', 'tache solaire', 'solaire', 'filtre solaire', 'aurore'],
+      reply: () => "<b>Observer le Soleil :</b> uniquement avec un <b>filtre solaire pleine ouverture</b> (film Baader AstroSolar, par exemple) placé à l'avant de l'instrument. Tu pourras voir les taches solaires et la granulation. Avec un télescope H-alpha dédié, protubérances et filaments apparaissent.\n\nNe laisse jamais un enfant manipuler seul un instrument pointé vers le Soleil.\n\n<b>Aurores :</b> activité liée au cycle solaire, consulte SpaceWeatherLive ou NOAA SWPC pour l'indice Kp. En France, des aurores sont possibles lors de grosses tempêtes géomagnétiques." },
+    { id: 'messier', kw: ['messier', 'galaxie', 'nebuleuse', 'amas', 'andromede', 'pleiades', 'ciel profond', 'deep sky'],
+      reply: () => "<b>Les Messier incontournables :</b>\n• <b>M31</b> Andromède (galaxie)\n• <b>M42</b> nébuleuse d'Orion\n• <b>M45</b> les Pléiades\n• <b>M13</b> amas globulaire d'Hercule\n• <b>M57</b> nébuleuse de l'Anneau\n• <b>M27</b> nébuleuse Dumbbell\n• <b>M51</b> galaxie du Tourbillon\n• <b>M81 / M82</b> galaxies de la Grande Ourse\n\nDemande-moi le détail d'un objet, par exemple « parle-moi de M13 ». Le marathon Messier, qui consiste à tous les observer en une nuit (autour de mars-avril), est un beau défi." },
+    { id: 'stars', kw: ['etoile', 'sirius', 'betelgeuse', 'vega', 'antares', 'rigel', 'double', 'couleur', 'albireo'],
+      reply: () => "<b>Étoiles remarquables :</b>\n• <b>Sirius</b> : la plus brillante du ciel nocturne, à 8,6 années-lumière\n• <b>Bételgeuse</b> : supergéante rouge d'Orion, variable\n• <b>Rigel</b> : supergéante bleue d'Orion\n• <b>Albireo</b> (Cygne) : double magnifique, une étoile dorée et une bleue, au télescope\n• <b>Mizar et Alcor</b> (Grande Ourse) : double à l'œil nu, test de vue classique\n• <b>Antarès</b> : supergéante rouge du Scorpion\n\nLa couleur des étoiles dépend de leur température : bleues les plus chaudes, rouges les plus froides." },
+    { id: 'milkyway', kw: ['voie lactee', 'galaxie', 'notre galaxie'],
+      reply: () => "La <b>Voie lactée</b> est notre galaxie vue de l'intérieur. Sa bande est la plus spectaculaire en été, vers le Sagittaire et le Cygne, où se trouve le centre galactique. Il faut un ciel sombre (Bortle 4 ou moins), loin des villes et sans Lune, pour la voir à l'œil nu. Aux jumelles, elle se résout en myriades d'étoiles." },
+    { id: 'thanks', kw: ['merci', 'thanks', 'super', 'genial', 'parfait'],
+      reply: () => "Avec plaisir ! Bon ciel et que les nuits soient claires ! ✨" },
+    { id: 'bye', kw: ['au revoir', 'bye', 'a plus', 'ciao', 'bonne nuit'],
+      reply: () => "Bonne observation, et ciel dégagé ! 🌌" },
+    { id: 'help', kw: ['aide', 'help', 'que sais-tu', 'que peux-tu', 'sujets'],
+      reply: () => "Je peux t'aider sur :\n• La Lune et ses phases\n• Ce qu'on voit ce soir et selon la saison\n• Les planètes\n• Les étoiles filantes\n• Les constellations et objets Messier\n• Le matériel (jumelles, télescope) et les calculs de grossissement\n• La pollution lumineuse et les bons sites\n• L'astrophotographie\n• Les applis utiles, l'ISS, les éclipses, le Soleil\n\nPose ta question !" }
+  ];
+
+  function normalize(s) {
+    return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s'-]/g, ' ');
+  }
+
+  function answer(text) {
+    const q = normalize(text);
+
+    const mm = q.match(/\bm\s?-?(\d{1,3})\b/);
+    if (mm) {
+      const key = 'm' + mm[1];
+      if (messier[key]) return messier[key];
+    }
+
+    let best = null, bestScore = 0;
+    for (const it of intents) {
+      let score = 0;
+      for (const k of it.kw) {
+        const nk = normalize(k).trim();
+        if (!nk) continue;
+        if (nk.length <= 3) {
+          if (new RegExp('\\b' + nk + '\\b').test(q)) score += 2;
+        } else if (q.includes(nk)) {
+          score += 1 + nk.length / 10;
+        }
+      }
+      if (score > bestScore) { best = it; bestScore = score; }
+    }
+    if (best) return best.reply();
+
+    return "Je n'ai pas bien compris ta question. Essaie par exemple « que voir ce soir ? », « phase de la Lune », « quel télescope pour débuter ? » ou « parle-moi de M31 ». Tape « aide » pour voir tout ce que je sais faire.";
+  }
+
+  function add(text, who) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + who;
+    if (who === 'bot') div.innerHTML = text; else div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  function botSay(text) {
+    const t = add('<span class="typing"><i></i><i></i><i></i></span>', 'bot');
+    setTimeout(() => {
+      t.innerHTML = text;
+      chat.scrollTop = chat.scrollHeight;
+    }, 450 + Math.min(text.length, 400));
+  }
+
+  function send(text) {
+    text = text.trim();
+    if (!text) return;
+    add(text, 'user');
+    input.value = '';
+    botSay(answer(text));
+  }
+
+  form.addEventListener('submit', e => { e.preventDefault(); send(input.value); });
+
+  const suggestions = [
+    'Que voir ce soir ?', 'Phase de la Lune', 'Étoiles filantes', 'Planètes visibles',
+    'Télescope pour débuter', 'Pollution lumineuse', 'Astrophotographie', 'Parle-moi de M31'
+  ];
+  suggestions.forEach(s => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = s;
+    b.addEventListener('click', () => send(s));
+    chipsBox.appendChild(b);
+  });
+
+  const m = moonInfo(new Date());
+  document.getElementById('moon-badge').innerHTML = '<span>' + m.icon + '</span>' + m.name + '<br>' + m.illum + ' %';
+
+  add("Bienvenue sous les étoiles ! 🔭 Je suis Astro Guide. Pose-moi une question sur l'observation du ciel, ou clique sur une suggestion ci-dessous.", 'bot');
+
+  const cv = document.getElementById('stars');
+  const ctx = cv.getContext('2d');
+  let stars = [];
+  function resize() {
+    cv.width = window.innerWidth;
+    cv.height = window.innerHeight;
+    stars = Array.from({ length: 140 }, () => ({
+      x: Math.random() * cv.width,
+      y: Math.random() * cv.height,
+      r: Math.random() * 1.3 + 0.2,
+      p: Math.random() * Math.PI * 2,
+      s: Math.random() * 0.02 + 0.005
+    }));
+  }
+  function draw() {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    for (const st of stars) {
+      st.p += st.s;
+      ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(st.p));
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  draw();
+})();
+</script>
+</body>
+</html>
